@@ -61,3 +61,20 @@
     (ok (map-set investments tx-sender
         { amount: (- current-amount amount),
           last-investment: last-investment-block }))))
+
+
+
+(define-map business-profiles
+    principal
+    { name: (string-ascii 50),
+      description: (string-ascii 500),
+      target-amount: uint }
+)
+
+(define-public (set-business-profile (name (string-ascii 50)) (description (string-ascii 500)) (target uint))
+    (let ((business (get-business-info tx-sender)))
+        (asserts! (get is-active business) ERR-NOT-AUTHORIZED)
+        (ok (map-set business-profiles tx-sender
+            { name: name,
+              description: description,
+              target-amount: target }))))
