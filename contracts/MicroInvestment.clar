@@ -78,3 +78,26 @@
             { name: name,
               description: description,
               target-amount: target }))))
+
+
+(define-map investor-tiers
+    uint
+    { min-amount: uint,
+      name: (string-ascii 20),
+      benefits: (string-ascii 100) }
+)
+
+(define-public (create-tier (tier-id uint) (min-amount uint) (name (string-ascii 20)) (benefits (string-ascii 100)))
+    (ok (map-set investor-tiers tier-id
+        { min-amount: min-amount,
+          name: name,
+          benefits: benefits })))
+
+
+(define-constant ERR-DISTRIBUTION-FAILED (err u104))
+
+(define-public (distribute-returns (amount uint))
+    (let ((business (get-business-info tx-sender)))
+        (asserts! (get is-active business) ERR-NOT-AUTHORIZED)
+        (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+        (ok true)))
