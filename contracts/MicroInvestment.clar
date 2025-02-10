@@ -4,6 +4,7 @@
 (define-constant ERR-NOT-AUTHORIZED (err u100))
 (define-constant ERR-INSUFFICIENT-FUNDS (err u101))
 (define-constant ERR-INVALID-AMOUNT (err u102))
+(define-constant ERR-CONTRACT-PAUSED (err u105))
 
 ;; Data Maps
 (define-map investments 
@@ -117,3 +118,15 @@
                 { milestones: (unwrap! (as-max-len? (append (get milestones current-milestones) milestone) u10) ERR-NOT-AUTHORIZED),
                   completed: (get completed current-milestones) }))
             ERR-NOT-AUTHORIZED)))
+
+
+    (define-data-var contract-paused bool false)
+(define-data-var contract-owner principal tx-sender)
+
+(define-public (toggle-pause)
+    (begin
+        (asserts! (is-eq tx-sender (var-get contract-owner)) ERR-NOT-AUTHORIZED)
+        (ok (var-set contract-paused (not (var-get contract-paused))))))
+
+(define-private (check-not-paused)
+    (ok (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)))
