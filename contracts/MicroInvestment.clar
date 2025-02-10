@@ -101,3 +101,19 @@
         (asserts! (get is-active business) ERR-NOT-AUTHORIZED)
         (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
         (ok true)))
+
+
+(define-map business-milestones
+    principal
+    { milestones: (list 10 (string-ascii 100)),
+      completed: (list 10 uint) }
+)
+
+(define-public (add-milestone (milestone (string-ascii 100)))
+    (let ((current-milestones (default-to { milestones: (list), completed: (list) }
+            (map-get? business-milestones tx-sender))))
+        (if (< (len (get milestones current-milestones)) u10)
+            (ok (map-set business-milestones tx-sender
+                { milestones: (unwrap! (as-max-len? (append (get milestones current-milestones) milestone) u10) ERR-NOT-AUTHORIZED),
+                  completed: (get completed current-milestones) }))
+            ERR-NOT-AUTHORIZED)))
