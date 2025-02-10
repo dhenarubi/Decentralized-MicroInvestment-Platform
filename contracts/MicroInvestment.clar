@@ -42,3 +42,22 @@
 (define-read-only (get-business-info (business principal))
     (default-to { total-raised: u0, is-active: false }
         (map-get? business-pool business)))
+
+
+
+(define-constant ERR-NO-INVESTMENT (err u103))
+(define-constant WITHDRAWAL-COOLDOWN u144) ;; ~24 hours in blocks
+
+(define-public (withdraw-investment (amount uint))
+    (let (
+        (current-investment (get-investment tx-sender))
+        (current-amount (get amount current-investment))
+        (last-investment-block (get last-investment current-investment))
+    )
+    (asserts! (>= current-amount amount) ERR-INSUFFICIENT-FUNDS)
+    (asserts! (> amount u0) ERR-INVALID-AMOUNT)
+    (asserts! (>= (- stacks-block-height last-investment-block) WITHDRAWAL-COOLDOWN) ERR-NOT-AUTHORIZED)
+    (try! (as-contract (stx-transfer? amount tx-sender tx-sender)))
+    (ok (map-set investments tx-sender
+        { amount: (- current-amount amount),
+          last-investment: last-investment-block }))))
