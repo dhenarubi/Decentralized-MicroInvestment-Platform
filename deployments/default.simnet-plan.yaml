@@ -52,6 +52,6 @@ plan:
         - emulated-contract-publish:
             contract-name: MicroInvestment
             emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-            path: contracts/MicroInvestment.clar
+            path: "contracts\\MicroInvestment.clar"
             clarity-version: 3
       epoch: "3.1"
