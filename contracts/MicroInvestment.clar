@@ -130,3 +130,131 @@
 
 (define-private (check-not-paused)
     (ok (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)))
+
+
+;; Add to data maps section
+(define-map investor-analytics
+    principal 
+    { total-invested: uint,
+      businesses-backed: uint,
+      last-activity: uint }
+)
+
+(define-public (update-analytics (amount uint))
+    (let (
+        (current-stats (default-to { total-invested: u0, businesses-backed: u1, last-activity: u0 }
+            (map-get? investor-analytics tx-sender)))
+    )
+    (ok (map-set investor-analytics tx-sender
+        { total-invested: (+ amount (get total-invested current-stats)),
+          businesses-backed: (get businesses-backed current-stats),
+          last-activity: stacks-block-height }))))
+
+
+
+(define-map business-ratings
+    principal
+    { total-score: uint,
+      raters-count: uint,
+      average-rating: uint }
+)
+
+(define-public (rate-business (business principal) (score uint))
+    (let (
+        (current-rating (default-to { total-score: u0, raters-count: u0, average-rating: u0 }
+            (map-get? business-ratings business)))
+    )
+    (asserts! (<= score u5) ERR-INVALID-AMOUNT)
+    (ok (map-set business-ratings business
+        { total-score: (+ score (get total-score current-rating)),
+          raters-count: (+ u1 (get raters-count current-rating)),
+          average-rating: (/ (+ score (get total-score current-rating)) (+ u1 (get raters-count current-rating))) }))))
+
+
+
+(define-constant REFERRAL-BONUS u50) ;; 5% bonus
+
+(define-map referrals
+    { referrer: principal, referee: principal }
+    { claimed: bool }
+)
+
+(define-public (refer-investor (referrer principal))
+    (let (
+        (ref-key { referrer: referrer, referee: tx-sender })
+    )
+    (asserts! (not (default-to false (get claimed (map-get? referrals ref-key)))) ERR-NOT-AUTHORIZED)
+    (ok (map-set referrals ref-key { claimed: true }))))
+
+
+
+(define-map milestone-rewards
+    { business: principal, milestone-id: uint }
+    { reward-amount: uint,
+      claimed: bool }
+)
+
+(define-public (set-milestone-reward (milestone-id uint) (reward uint))
+    (let (
+        (milestone-key { business: tx-sender, milestone-id: milestone-id })
+    )
+    (ok (map-set milestone-rewards milestone-key
+        { reward-amount: reward,
+          claimed: false }))))
+
+
+(define-data-var emergency-fund uint u0)
+(define-constant EMERGENCY-FEE u10) ;; 1% fee
+
+(define-public (contribute-emergency-fund (amount uint))
+    (begin
+        (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+        (ok (var-set emergency-fund (+ amount (var-get emergency-fund))))))
+
+
+(define-map insurance-pool
+    principal
+    { coverage-amount: uint,
+      premium-paid: uint,
+      active: bool }
+)
+
+(define-public (purchase-insurance (coverage uint))
+    (let (
+        (premium (/ coverage u20)) ;; 5% premium
+    )
+    (try! (stx-transfer? premium tx-sender (as-contract tx-sender)))
+    (ok (map-set insurance-pool tx-sender
+        { coverage-amount: coverage,
+          premium-paid: premium,
+          active: true }))))
+
+
+(define-map business-metrics
+    principal
+    { revenue: uint,
+      profit-margin: uint,
+      update-frequency: uint }
+)
+
+(define-public (update-business-metrics (revenue uint) (profit-margin uint))
+    (ok (map-set business-metrics tx-sender
+        { revenue: revenue,
+          profit-margin: profit-margin,
+          update-frequency: stacks-block-height })))
+
+
+(define-map investment-schedules
+    principal
+    { amount: uint,
+      frequency: uint,
+      last-execution: uint,
+      active: bool }
+)
+
+(define-public (set-investment-schedule (amount uint) (frequency uint))
+    (ok (map-set investment-schedules tx-sender
+        { amount: amount,
+          frequency: frequency,
+          last-execution: stacks-block-height,
+          active: true })))
