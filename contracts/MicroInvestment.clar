@@ -258,3 +258,64 @@
           frequency: frequency,
           last-execution: stacks-block-height,
           active: true })))
+
+
+(define-constant MAX-INVESTMENT-PERCENTAGE u700) ;; 70% of total investments
+
+(define-map portfolio-limits
+    principal 
+    { max-per-business: uint }
+)
+
+(define-public (set-portfolio-limit (percentage uint))
+    (begin
+        (asserts! (<= percentage MAX-INVESTMENT-PERCENTAGE) ERR-INVALID-AMOUNT)
+        (ok (map-set portfolio-limits tx-sender
+            { max-per-business: percentage }))))
+
+(define-read-only (check-portfolio-limit (investor principal) (amount uint) (business principal))
+    (let (
+        (limit (default-to { max-per-business: MAX-INVESTMENT-PERCENTAGE } 
+            (map-get? portfolio-limits investor)))
+        (total-invested (get total-invested 
+            (default-to { total-invested: u0, businesses-backed: u0, last-activity: u0 }
+                (map-get? investor-analytics investor))))
+    )
+    (ok (<= (* amount u1000) (* total-invested (get max-per-business limit))))))
+
+
+
+
+(define-map revenue-sharing
+    principal
+    { total-shares: uint,
+      unclaimed-revenue: uint,
+      share-price: uint }
+)
+
+(define-public (distribute-revenue)
+    (let (
+        (business-data (default-to { total-shares: u0, unclaimed-revenue: u0, share-price: u0 }
+            (map-get? revenue-sharing tx-sender)))
+        (amount (stx-get-balance tx-sender))
+    )
+    (begin
+        (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+        (ok (map-set revenue-sharing tx-sender
+            { total-shares: (get total-shares business-data),
+              unclaimed-revenue: (+ amount (get unclaimed-revenue business-data)),
+              share-price: (/ amount (get total-shares business-data)) })))))
+
+(define-public (claim-revenue-share (business principal))
+    (let (
+        (investor-amount (get amount (get-investment tx-sender)))
+        (business-data (default-to { total-shares: u0, unclaimed-revenue: u0, share-price: u0 }
+            (map-get? revenue-sharing business)))
+        (share-amount (* investor-amount (get share-price business-data)))
+    )
+    (begin
+        (try! (as-contract (stx-transfer? share-amount tx-sender tx-sender)))
+        (ok (map-set revenue-sharing business
+            { total-shares: (get total-shares business-data),
+              unclaimed-revenue: (- (get unclaimed-revenue business-data) share-amount),
+              share-price: (get share-price business-data) })))))
