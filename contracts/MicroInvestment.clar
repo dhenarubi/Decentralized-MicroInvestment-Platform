@@ -5,6 +5,9 @@
 (define-constant ERR-INSUFFICIENT-FUNDS (err u101))
 (define-constant ERR-INVALID-AMOUNT (err u102))
 (define-constant ERR-CONTRACT-PAUSED (err u105))
+(define-constant REFERRAL-TIER-1 u1000) ;; $1000 threshold
+(define-constant REFERRAL-BONUS-1 u50)  ;; 5% bonus
+(define-constant REFERRAL-BONUS-2 u100) ;; 10% bonus
 
 ;; Data Maps
 (define-map investments 
@@ -19,6 +22,17 @@
       is-active: bool }
 )
 
+
+(define-map timelocks
+    { investor: principal, business: principal }
+    { amount: uint, unlock-height: uint }
+)(define-public (timelock-investment (business principal) (amount uint) (duration uint))
+    (let (
+        (unlock-height (+ stacks-block-height duration))
+        (timelock-key { investor: tx-sender, business: business })
+    )
+        (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+        (ok (map-set timelocks timelock-key { amount: amount, unlock-height: unlock-height }))))
 ;; Public Functions
 (define-public (invest (amount uint) (business principal))
     (let
@@ -176,15 +190,22 @@
 
 (define-map referrals
     { referrer: principal, referee: principal }
-    { claimed: bool }
+    { claimed: bool, amount: uint }
 )
 
-(define-public (refer-investor (referrer principal))
+(define-public (refer-investor (referrer principal) (amount uint))
     (let (
         (ref-key { referrer: referrer, referee: tx-sender })
     )
-    (asserts! (not (default-to false (get claimed (map-get? referrals ref-key)))) ERR-NOT-AUTHORIZED)
-    (ok (map-set referrals ref-key { claimed: true }))))
+    ;; (asserts! (not (default-to { claimed: false, amount: u0 } (map-get? referrals ref-key))) ERR-NOT-AUTHORIZED)
+    (let (
+        (bonus (if (>= amount REFERRAL-TIER-1)
+                 (/ (* amount REFERRAL-BONUS-2) u1000)
+                 (/ (* amount REFERRAL-BONUS-1) u1000)))
+    )
+        (try! (as-contract (stx-transfer? bonus referrer tx-sender)))
+        (ok (map-set referrals ref-key { claimed: true, amount: amount })))))
+
 
 
 
@@ -319,3 +340,36 @@
             { total-shares: (get total-shares business-data),
               unclaimed-revenue: (- (get unclaimed-revenue business-data) share-amount),
               share-price: (get share-price business-data) })))))
+        
+
+(define-map auto-investments
+  { investor: principal, business: principal }
+  { amount: uint, frequency: uint, last-execution: uint, active: bool }
+)
+
+(define-public (set-auto-investment (business principal) (amount uint) (frequency uint))
+  (begin
+    (asserts! (> amount u0) ERR-INVALID-AMOUNT)
+    (asserts! (> frequency u0) ERR-INVALID-AMOUNT)
+    (ok (map-set auto-investments { investor: tx-sender, business: business }
+      { amount: amount, frequency: frequency, last-execution: stacks-block-height, active: true }))
+  )
+)
+(define-public (withdraw-business-funds (amount uint))
+  (let (
+    (business-info (get-business-info tx-sender))
+    (pool-info (default-to { total-raised: u0, is-active: false } (map-get? business-pool tx-sender)))
+    (emergency-current (var-get emergency-fund))
+    (fee (/ (* amount EMERGENCY-FEE) u1000))
+    (net-amount (- amount fee))
+  )
+    (asserts! (get is-active business-info) ERR-NOT-AUTHORIZED)
+    (asserts! (>= (get total-raised pool-info) amount) ERR-INSUFFICIENT-FUNDS)
+    (asserts! (> amount u0) ERR-INVALID-AMOUNT)
+    (try! (stx-transfer? net-amount (as-contract tx-sender) tx-sender))
+    (var-set emergency-fund (+ emergency-current fee))
+    (map-set business-pool tx-sender
+      { total-raised: (- (get total-raised pool-info) amount), is-active: true })
+    (ok true)
+  )
+)
