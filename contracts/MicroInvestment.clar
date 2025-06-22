@@ -9,6 +9,42 @@
 (define-constant REFERRAL-BONUS-1 u50)  ;; 5% bonus
 (define-constant REFERRAL-BONUS-2 u100) ;; 10% bonus
 
+(define-constant ERR-DISPUTE-NOT-FOUND (err u106))
+(define-constant ERR-DISPUTE-EXPIRED (err u107))
+(define-constant ERR-ALREADY-VOTED (err u108))
+(define-constant ERR-DISPUTE-RESOLVED (err u109))
+(define-constant DISPUTE-DURATION u1008)
+(define-constant MIN-VOTES-REQUIRED u3)
+
+(define-data-var dispute-counter uint u0)
+
+(define-map disputes
+    uint
+    { business: principal,
+      complainant: principal,
+      reason: (string-ascii 200),
+      amount-disputed: uint,
+      created-at: uint,
+      expires-at: uint,
+      status: (string-ascii 20),
+      votes-for: uint,
+      votes-against: uint,
+      resolved: bool }
+)
+
+(define-map dispute-votes
+    { dispute-id: uint, voter: principal }
+    { vote: bool, voting-power: uint }
+)
+
+(define-map dispute-evidence
+    uint
+    { evidence-hash: (string-ascii 64),
+      description: (string-ascii 300) }
+)
+
+
+
 ;; Data Maps
 (define-map investments 
     principal 
@@ -372,4 +408,96 @@
       { total-raised: (- (get total-raised pool-info) amount), is-active: true })
     (ok true)
   )
+)
+
+(define-public (raise-dispute (business principal) (reason (string-ascii 200)) (amount uint) (evidence-hash (string-ascii 64)) (evidence-desc (string-ascii 300)))
+    (let (
+        (dispute-id (+ (var-get dispute-counter) u1))
+        (current-block stacks-block-height)
+        (expiry-block (+ current-block DISPUTE-DURATION))
+        (investor-data (get-investment tx-sender))
+    )
+        (asserts! (> (get amount investor-data) u0) ERR-NOT-AUTHORIZED)
+        (asserts! (> amount u0) ERR-INVALID-AMOUNT)
+        (var-set dispute-counter dispute-id)
+        (map-set disputes dispute-id
+            { business: business,
+              complainant: tx-sender,
+              reason: reason,
+              amount-disputed: amount,
+              created-at: current-block,
+              expires-at: expiry-block,
+              status: "active",
+              votes-for: u0,
+              votes-against: u0,
+              resolved: false })
+        (map-set dispute-evidence dispute-id
+            { evidence-hash: evidence-hash,
+              description: evidence-desc })
+        (ok dispute-id)
+    )
+)
+
+(define-public (vote-on-dispute (dispute-id uint) (vote-for bool))
+    (let (
+        (dispute-data (unwrap! (map-get? disputes dispute-id) ERR-DISPUTE-NOT-FOUND))
+        (voter-investment (get-investment tx-sender))
+        (voting-power (get amount voter-investment))
+        (vote-key { dispute-id: dispute-id, voter: tx-sender })
+        (current-block stacks-block-height)
+    )
+        (asserts! (not (get resolved dispute-data)) ERR-DISPUTE-RESOLVED)
+        (asserts! (< current-block (get expires-at dispute-data)) ERR-DISPUTE-EXPIRED)
+        (asserts! (> voting-power u0) ERR-NOT-AUTHORIZED)
+        (asserts! (is-none (map-get? dispute-votes vote-key)) ERR-ALREADY-VOTED)
+        (map-set dispute-votes vote-key
+            { vote: vote-for, voting-power: voting-power })
+        (if vote-for
+            (map-set disputes dispute-id
+                (merge dispute-data { votes-for: (+ (get votes-for dispute-data) voting-power) }))
+            (map-set disputes dispute-id
+                (merge dispute-data { votes-against: (+ (get votes-against dispute-data) voting-power) })))
+        (ok true)
+    )
+)
+
+(define-public (resolve-dispute (dispute-id uint))
+    (let (
+        (dispute-data (unwrap! (map-get? disputes dispute-id) ERR-DISPUTE-NOT-FOUND))
+        (current-block stacks-block-height)
+        (total-votes (+ (get votes-for dispute-data) (get votes-against dispute-data)))
+        (votes-for (get votes-for dispute-data))
+        (votes-against (get votes-against dispute-data))
+        (business (get business dispute-data))
+        (complainant (get complainant dispute-data))
+        (disputed-amount (get amount-disputed dispute-data))
+    )
+        (asserts! (not (get resolved dispute-data)) ERR-DISPUTE-RESOLVED)
+        (asserts! (>= current-block (get expires-at dispute-data)) ERR-NOT-AUTHORIZED)
+        (asserts! (>= total-votes MIN-VOTES-REQUIRED) ERR-NOT-AUTHORIZED)
+        (if (> votes-for votes-against)
+            (begin
+                (try! (as-contract (stx-transfer? disputed-amount tx-sender complainant)))
+                (map-set disputes dispute-id
+                    (merge dispute-data { status: "upheld", resolved: true })))
+            (map-set disputes dispute-id
+                (merge dispute-data { status: "dismissed", resolved: true })))
+        (ok true)
+    )
+)
+
+(define-read-only (get-dispute (dispute-id uint))
+    (map-get? disputes dispute-id)
+)
+
+(define-read-only (get-dispute-evidence (dispute-id uint))
+    (map-get? dispute-evidence dispute-id)
+)
+
+(define-read-only (get-user-vote (dispute-id uint) (voter principal))
+    (map-get? dispute-votes { dispute-id: dispute-id, voter: voter })
+)
+
+(define-read-only (get-active-disputes)
+    (var-get dispute-counter)
 )
