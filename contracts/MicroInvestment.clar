@@ -501,3 +501,138 @@
 (define-read-only (get-active-disputes)
     (var-get dispute-counter)
 )
+
+
+(define-constant ERR-LISTING-NOT-FOUND (err u201))
+(define-constant ERR-INSUFFICIENT-LISTING (err u202))
+(define-constant ERR-CANNOT-BUY-OWN (err u203))
+(define-constant ERR-LISTING-EXPIRED (err u204))
+(define-constant LIQUIDITY-FEE u25)
+
+(define-data-var listing-counter uint u0)
+
+(define-map liquidity-listings
+    uint
+    { seller: principal,
+      business: principal,
+      amount: uint,
+      price-per-share: uint,
+      expires-at: uint,
+      active: bool }
+)
+
+(define-map liquidity-providers
+    principal
+    { total-provided: uint,
+      fees-earned: uint,
+      last-reward: uint }
+)
+
+(define-public (list-investment-for-sale (business principal) (amount uint) (price-per-share uint) (duration uint))
+    (let (
+        (listing-id (+ (var-get listing-counter) u1))
+        (investor-data (get-investment tx-sender))
+        (expires-block (+ stacks-block-height duration))
+    )
+        (asserts! (>= (get amount investor-data) amount) ERR-INSUFFICIENT-FUNDS)
+        (asserts! (> amount u0) ERR-INVALID-AMOUNT)
+        (asserts! (> price-per-share u0) ERR-INVALID-AMOUNT)
+        (var-set listing-counter listing-id)
+        (map-set liquidity-listings listing-id
+            { seller: tx-sender,
+              business: business,
+              amount: amount,
+              price-per-share: price-per-share,
+              expires-at: expires-block,
+              active: true })
+        (ok listing-id)
+    )
+)
+
+(define-public (buy-listed-investment (listing-id uint) (amount uint))
+    (let (
+        (listing-data (unwrap! (map-get? liquidity-listings listing-id) ERR-LISTING-NOT-FOUND))
+        (seller (get seller listing-data))
+        (business (get business listing-data))
+        (listing-amount (get amount listing-data))
+        (price-per-share (get price-per-share listing-data))
+        (total-cost (* amount price-per-share))
+        (fee-amount (/ (* total-cost LIQUIDITY-FEE) u1000))
+        (seller-payment (- total-cost fee-amount))
+        (current-block stacks-block-height)
+        (buyer-investment (get-investment tx-sender))
+        (seller-investment (get-investment seller))
+    )
+        (asserts! (get active listing-data) ERR-LISTING-NOT-FOUND)
+        (asserts! (< current-block (get expires-at listing-data)) ERR-LISTING-EXPIRED)
+        (asserts! (not (is-eq tx-sender seller)) ERR-CANNOT-BUY-OWN)
+        (asserts! (<= amount listing-amount) ERR-INSUFFICIENT-LISTING)
+        (asserts! (> amount u0) ERR-INVALID-AMOUNT)
+        (try! (stx-transfer? total-cost tx-sender (as-contract tx-sender)))
+        (try! (as-contract (stx-transfer? seller-payment tx-sender seller)))
+        (map-set investments tx-sender
+            { amount: (+ (get amount buyer-investment) amount),
+              last-investment: stacks-block-height })
+        (map-set investments seller
+            { amount: (- (get amount seller-investment) amount),
+              last-investment: (get last-investment seller-investment) })
+        (if (is-eq amount listing-amount)
+            (map-set liquidity-listings listing-id
+                (merge listing-data { active: false }))
+            (map-set liquidity-listings listing-id
+                (merge listing-data { amount: (- listing-amount amount) })))
+        (ok true)
+    )
+)
+
+(define-public (provide-liquidity (amount uint))
+    (let (
+        (provider-data (default-to { total-provided: u0, fees-earned: u0, last-reward: u0 }
+            (map-get? liquidity-providers tx-sender)))
+    )
+        (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+        (map-set liquidity-providers tx-sender
+            { total-provided: (+ amount (get total-provided provider-data)),
+              fees-earned: (get fees-earned provider-data),
+              last-reward: stacks-block-height })
+        (ok true)
+    )
+)
+
+(define-public (claim-liquidity-rewards)
+    (let (
+        (provider-data (unwrap! (map-get? liquidity-providers tx-sender) ERR-NOT-AUTHORIZED))
+        (total-provided (get total-provided provider-data))
+        (reward-amount (/ total-provided u100))
+    )
+        (asserts! (> total-provided u0) ERR-NOT-AUTHORIZED)
+        (try! (as-contract (stx-transfer? reward-amount tx-sender tx-sender)))
+        (map-set liquidity-providers tx-sender
+            (merge provider-data { last-reward: stacks-block-height }))
+        (ok reward-amount)
+    )
+)
+
+(define-public (cancel-listing (listing-id uint))
+    (let (
+        (listing-data (unwrap! (map-get? liquidity-listings listing-id) ERR-LISTING-NOT-FOUND))
+    )
+        (asserts! (is-eq tx-sender (get seller listing-data)) ERR-NOT-AUTHORIZED)
+        (asserts! (get active listing-data) ERR-LISTING-NOT-FOUND)
+        (map-set liquidity-listings listing-id
+            (merge listing-data { active: false }))
+        (ok true)
+    )
+)
+
+(define-read-only (get-listing (listing-id uint))
+    (map-get? liquidity-listings listing-id)
+)
+
+(define-read-only (get-liquidity-provider (provider principal))
+    (map-get? liquidity-providers provider)
+)
+
+(define-read-only (get-active-listings)
+    (var-get listing-counter)
+)
