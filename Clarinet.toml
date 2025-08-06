@@ -9,6 +9,11 @@ requirements = []
 path = 'contracts/MicroInvestment.clar'
 clarity_version = 3
 epoch = 3.1
+
+[contracts.PortfolioRebalancer]
+path = 'contracts/PortfolioRebalancer.clar'
+clarity_version = 3
+epoch = 3.1
 [repl.analysis]
 passes = ['check_checker']
 
